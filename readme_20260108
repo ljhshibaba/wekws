@@ -1,0 +1,223 @@
+https://zhuanlan.zhihu.com/p/686365901
+
+语音唤醒——(三 wekws 模型训练)
+52AI
+52AI​
+北京建筑大学 工学硕士
+​关注他
+收录于 · NLP
+8 人赞同了该文章
+​
+目录
+收起
+名词解释:
+环境准备
+训练数据
+wekws模型训练
+0) 方案１的网络结构KWSModel由四部分组成。
+１: 先下载解压好上文开源训练数据，Hi Xiaowen(你好小问)
+2: 数据预处理
+3: 计算CMVN和格式化数据
+4. 开始训练。 bash run.sh 2 2
+5: 在dev上评估得到averaged模型,test上评估模型性能.
+6: 模型导出
+遇到问题
+参考内容:
+52AI：语音唤醒—— wekws项目进行了语言唤醒介绍，52AI：语言唤醒——wekws(二 模型转换 移动端推理)主要是模型转换和部署。本文示例使用“你好问问”数据来进行唤醒词模型训练。
+
+名词解释:
+CMVN(cepstral mean and variance normalization): 　倒谱均值和方差归一化（CMVN）。用于将输入的声学特征(FBank转换成从梅尔频谱特征)归一化为正态分布。
+
+TCN( temporal convolutional network)：时序卷积网络。时序的意思是该网络结构是处理时序数据的(比如下文的音频数据)。
+
+
+
+环境准备
+git clone https://github.com/wenet-e2e/wekws.git
+
+conda create -n wekws python=3.8
+conda activate wekws
+pip install -r requirements.txt
+conda install pytorch=1.10.0 torchaudio=0.10.0 cudatoolkit=11.1 -c pytorch -c conda-forge
+>> cat /etc/issue	Ubuntu 18.04.6 LTS \n \l
+>> nvcc -V	Build cuda_11.8.r11.8/compiler.31833905_0
+>> pip list | grep torch	torch==2.2.1 , torchaudio=2.2.1
+>> nvidia-smi	3090-24G
+训练数据
+Hi Xiaowen(你好小问)是从Mobvoi的商业智能扬声器中收集的唤醒词语料库。它包括关键词和非关键词话语。 对于关键词数据，收集包含“嗨小文”或“你好雯雯”的关键词话语。对于每个关键词，大约有36k个话语。所有关键词数据都来自788名受试者，年龄在3-65岁之间，与智能扬声器的距离不同（1米、3米和5米）。在采集过程中，背景中会播放不同声压级的不同噪音（典型的家庭环境噪音，如音乐和电视）。
+
+魔塔数据下载地址: [你好问问]
+
+ll wekws/local/xiaowen/mobvoi_hotword_dataset | wc -l 总音频条数 286584
+
+
+如上图所示，n_train.json, n_dev.json, n_test.json为负样本标签信息。 p_train.json, p_dev.json, p_test.json为正样本标签信息。
+
+wekws模型训练
+wekws工具支持三个唤醒方案的训练。
+
+1) 基于Max-Pooling Loss的方案: wekws/examples/hi_xiaowen/s0/run.sh
+
+2) 基于CTC Loss (DS_TCN backbone)的方案: wekws/examples/hi_xiaowen/s0/run_ctc.sh
+
+3) 基于CTC Loss (FSMN backbone)的方案: wekws/examples/hi_xiaowen/s0/run_fsmn_ctc.sh
+
+
+
+本文跑方案1)
+
+0) 方案１的网络结构KWSModel由四部分组成。
+　第一部分：GlobalCMVN层:用于归一化输入的音频声学特征。
+
+　第二部分: 线性层LinearSubsampling1用于将输入特征维度映射到模型设计的维度。比如如下是从in_features=40到out_features=256。
+
+　第三部分: backbone DS_TCN. 轻量化的TCN结构，核心的模型参数。
+
+　第四部分:　LinearClassifier线性分类器，针对每一个关键词(唤醒词)都使用独立的二分类来处理。
+
+KWSModel(
+  (global_cmvn): GlobalCMVN()
+  (preprocessing): LinearSubsampling1(
+    (out): Sequential(
+      (0): Linear(in_features=40, out_features=256, bias=True)
+      (1): ReLU()
+    )
+    (quant): QuantStub()
+    (dequant): DeQuantStub()
+  )
+  (backbone): TCN(
+    (network): ModuleList(
+      (0): DsCnnBlock(
+        (quant): QuantStub()
+        (dequant): DeQuantStub()
+        (cnn): Sequential(
+          (0): Conv1d(256, 256, kernel_size=(8,), stride=(1,), groups=256)
+          (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): ReLU()
+          (3): Conv1d(256, 256, kernel_size=(1,), stride=(1,))
+          (4): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (5): ReLU()
+          (6): Dropout(p=0.1, inplace=False)
+        )
+      )
+      (1): DsCnnBlock(
+        (quant): QuantStub()
+        (dequant): DeQuantStub()
+        (cnn): Sequential(
+          (0): Conv1d(256, 256, kernel_size=(8,), stride=(1,), dilation=(2,), groups=256)
+          (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): ReLU()
+          (3): Conv1d(256, 256, kernel_size=(1,), stride=(1,))
+          (4): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (5): ReLU()
+          (6): Dropout(p=0.1, inplace=False)
+        )
+      )
+      (2): DsCnnBlock(
+        (quant): QuantStub()
+        (dequant): DeQuantStub()
+        (cnn): Sequential(
+          (0): Conv1d(256, 256, kernel_size=(8,), stride=(1,), dilation=(4,), groups=256)
+          (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): ReLU()
+          (3): Conv1d(256, 256, kernel_size=(1,), stride=(1,))
+          (4): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (5): ReLU()
+          (6): Dropout(p=0.1, inplace=False)
+        )
+      )
+      (3): DsCnnBlock(
+        (quant): QuantStub()
+        (dequant): DeQuantStub()
+        (cnn): Sequential(
+          (0): Conv1d(256, 256, kernel_size=(8,), stride=(1,), dilation=(8,), groups=256)
+          (1): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (2): ReLU()
+          (3): Conv1d(256, 256, kernel_size=(1,), stride=(1,))
+          (4): BatchNorm1d(256, eps=1e-05, momentum=0.1, affine=True, track_running_stats=True)
+          (5): ReLU()
+          (6): Dropout(p=0.1, inplace=False)
+        )
+      )
+    )
+  )
+  (classifier): LinearClassifier(
+    (linear): Linear(in_features=256, out_features=2, bias=True)
+    (quant): QuantStub()
+    (dequant): DeQuantStub()
+  )
+  (activation): Sigmoid()
+)
+１: 先下载解压好上文开源训练数据，Hi Xiaowen(你好小问)
+
+准备好训练数据
+2: 数据预处理
+修改wekws/examples/hi_xiaowen/s0/run.sh中数据地址。然后执行数据准备的步骤，分割train, dev,test数据集。
+
+cd /mnt2/cy/works/wekws/examples/hi_xiaowen/s0
+bash run.sh 0 0 
+3: 计算CMVN和格式化数据
+# 来自 wekws/examples/hi_xiaowen/s0/run.sh
+　if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
+  echo "Compute CMVN and Format datasets"
+  tools/compute_cmvn_stats.py --num_workers 16 --train_config $config \
+    --in_scp data/train/wav.scp \
+    --out_cmvn data/train/global_cmvn
+
+  for x in train dev test; do
+    tools/wav_to_duration.sh --nj 8 data/$x/wav.scp data/$x/wav.dur
+    tools/make_list.py data/$x/wav.scp data/$x/text \
+      data/$x/wav.dur data/$x/data.list
+  done
+  echo "Compute CMVN and Format datasets overed"
+fi
+对参加训练的数据做了一个全局均值和方差计算。
+分别计算train, dev,test中音频数据的时长，再格式化成data.list.便于后续训练。
+生成全局cmvn文件如下(示例path=wekws/examples/hi_xiaowen/s0/data/train/global_cmvn):
+
+{"mean_stat": [641100864.0, 726316864.0, 790376384.0, 857193728.0, 885395840.0, 901389888.0, 913746816.0, 921307264.0, 917022720.0, 918716288.0, 914865408.0, 903677824.0, 890294464.0, 886613760.0, 888844224.0, 890251776.0, 894905600.0, 900623360.0, 905231232.0, 905286528.0, 905918784.0, 900851456.0, 895017536.0, 894448960.0, 901327744.0, 907124672.0, 910670336.0, 918566592.0, 924316864.0, 926306560.0, 925170816.0, 919221632.0, 909990272.0, 900984960.0, 898823232.0, 895029504.0, 888546432.0, 875822976.0, 845126080.0, 789872128.0], "var_stat": [8594065408.0, 10911824896.0, 12872102912.0, 15089309696.0, 16063411200.0, 16626903040.0, 17091667968.0, 17374965760.0, 17223931904.0, 17286133760.0, 17161442304.0, 16743064576.0, 16245957632.0, 16109199360.0, 16185009152.0, 16214293504.0, 16359851008.0, 16541389824.0, 16689924096.0, 16672066560.0, 16676231168.0, 16465618944.0, 16226797568.0, 16182184960.0, 16416855040.0, 16621239296.0, 16746479616.0, 17033269248.0, 17226860544.0, 17288824832.0, 17237532672.0, 17004589056.0, 16644535296.0, 16300084224.0, 16234856448.0, 16122157056.0, 15938213888.0, 15570308096.0, 14603229184.0, 12899322880.0], "frame_num": 51564008}
+
+生的dev/data.list中第一条示例数据如下：
+
+{"key": "ae4a93276151f8da99d7ef4a03a14aa5", "txt": 0, "duration": 1.829, "wav": "/mnt/data/keywords_spot/mobvoi_hotword_dataset/ae4a93276151f8da99d7ef4a03a14aa5.wav"}
+
+
+
+4. 开始训练。 bash run.sh 2 2
+＃run.sh中的训练命令
+if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
+  echo "Start training ..."
+  mkdir -p $dir
+  cmvn_opts=
+  $norm_mean && cmvn_opts="--cmvn_file data/train/global_cmvn"
+  $norm_var && cmvn_opts="$cmvn_opts --norm_var"
+  num_gpus=$(echo $gpus | awk -F ',' '{print NF}')
+  torchrun --standalone --nnodes=1 --nproc_per_node=$num_gpus \
+    wekws/bin/train.py --gpus $gpus \
+      --config $config \
+      --train_data data/train/data.list \
+      --cv_data data/dev/data.list \
+      --model_dir $dir \
+      --num_workers 8 \
+      --num_keywords $num_keywords \
+      --min_duration 50 \
+      --seed 666 \
+      $cmvn_opts \
+      ${checkpoint:+--checkpoint $checkpoint}
+fi
+可以根据个人情况修改下run.sh脚本中的显卡指定gpus="x,x"，在examples/hi_xiaowen/s0/conf/ds_tcn.yaml配置文件中修改训练的max_epoch,log_interval，lr等参数。
+
+训练总结: 单卡3090-24G训练，需要显存17G左右。训练时长7H, 训练日志:点击查看 。
+
+5: 在dev上评估得到averaged模型,test上评估模型性能.
+从训练的80个epochs中选择30个在dev集上的best model.然后对其取均值得到最终模型.
+
+
+6: 模型导出
+这部分可参考 52AI：语言唤醒——wekws(二 模型转换 移动端推理)
+
+遇到问题
+Q1: OSError: libsox.so: cannot open shared object file: No such file or directory
+
+S1: "sudo apt-get install libsox-dev"有效解决。参考issue
+
